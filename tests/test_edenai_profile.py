@@ -15,6 +15,7 @@ _CATALOG = {
         {"id": "mistral-small", "context_length": 32_768},
         {"id": "mistral-small-latest", "context_length": 131_072},
         {"id": "claude-sonnet-5.5", "context_length": 1_000_000},
+        {"id": "north-small-translate-1.0", "capabilities": {"supports_function_calling": False}},
     ],
 }
 
@@ -46,7 +47,7 @@ def server(monkeypatch):
 
 
 class TestCatalog:
-    def test_lists_model_names_from_the_models_view(self, server):
+    def test_the_picker_lists_tool_calling_model_names_from_the_models_view(self, server):
         assert _profile().fetch_models(api_key="k") == [
             "mistral-small", "mistral-small-latest", "claude-sonnet-5.5",
         ]
@@ -60,7 +61,9 @@ class TestCatalog:
         from hermes_cli.models import probe_api_models
 
         result = probe_api_models("k", "https://api.eu.edenai.run/v3")
-        assert result["models"] == ["mistral-small", "mistral-small-latest", "claude-sonnet-5.5"]
+        assert result["models"] == [
+            "mistral-small", "mistral-small-latest", "claude-sonnet-5.5", "north-small-translate-1.0",
+        ]
         assert result["probed_url"] == "https://api.eu.edenai.run/v3/models?view=models"
 
     def test_context_window_is_matched_by_exact_name(self, server):

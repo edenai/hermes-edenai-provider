@@ -63,16 +63,27 @@ class EdenAIProfile(ProviderProfile):
     def fetch_models(
         self, *, api_key: str | None = None, base_url: str | None = None, timeout: float = 8.0,
     ) -> list[str] | None:
-        """Model names; the LLM catalog lists chat models only."""
+        """The picker's model names: the ones that call tools, since Hermes always sends tools (a
+        model without them answers a tool call with text, or a 400)."""
         items = self._catalog(api_key=api_key, base_url=base_url, timeout=timeout)
-        return [item["id"] for item in items if isinstance(item.get("id"), str)] if items is not None else None
+        if items is None:
+            return None
+        return [
+            item["id"] for item in items
+            if isinstance(item.get("id"), str)
+            and (item.get("capabilities") or {}).get("supports_function_calling") is not False
+        ]
 
     def probe_models(
         self, *, base_url: str, api_key: str | None = None, timeout: float = 5.0,
     ) -> tuple[list[str] | None, str, str] | None:
-        """Setup and model validation on a custom endpoint check against model names too."""
-        ids = self.fetch_models(api_key=api_key, base_url=base_url, timeout=timeout)
-        return (ids, _catalog_url(base_url), base_url) if ids is not None else None
+        """Setup and model validation on a custom endpoint check every model name, so a model typed
+        by hand is still accepted."""
+        items = self._catalog(api_key=api_key, base_url=base_url, timeout=timeout)
+        if items is None:
+            return None
+        ids = [item["id"] for item in items if isinstance(item.get("id"), str)]
+        return ids, _catalog_url(base_url), base_url
 
     def invalidate_catalog_cache(self) -> None:
         _catalog_cache.clear()
@@ -110,6 +121,8 @@ edenai = EdenAIProfile(
     description="Eden AI: one API for the models of many labs and providers",
     signup_url="https://app.edenai.run/", env_vars=("EDENAI_API_KEY", "EDENAI_BASE_URL"),
     base_url=_BASE_URL, auth_type="api_key",
+    # models.dev lists Eden AI's model names with their capabilities (vision, tools, reasoning).
+    models_dev_id="edenai",
     # A custom endpoint at any Eden AI host (api.eu.edenai.run, ...) uses this profile too.
     hostnames=("edenai.run",),
     default_headers={"HTTP-Referer": "https://hermes-agent.nousresearch.com", "X-Title": "Hermes Agent"},
