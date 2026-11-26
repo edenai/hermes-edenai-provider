@@ -1,0 +1,11 @@
+name: edenai-provider
+kind: model-provider
+version: 1.0.0
+description: Eden AI, one OpenAI-compatible API for the models of many labs and providers
+author: Eden AI
+requires_hermes: ">=0.23.4"
+requires_env:
+  - name: EDENAI_API_KEY
+    description: Eden AI API key
+    url: https://app.edenai.run/
+    secret: true
