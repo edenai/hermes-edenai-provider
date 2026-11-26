@@ -106,6 +106,52 @@ class TestRequests:
         assert p.build_extra_body(session_id="20260101_120000_abc123") == first
         assert p.build_extra_body(session_id=None) == {}
 
+
+class TestSubagents:
+    """A delegate_task tree: the top agent, a subagent, and the subagent's own subagent."""
+
+    @pytest.fixture
+    def tree(self, monkeypatch):
+        import weakref
+        from types import SimpleNamespace
+
+        class Agent(SimpleNamespace):  # weak-referenceable, as Hermes' agents are
+            pass
+
+        plugin = sys.modules[type(_profile()).__module__]
+        top = Agent(session_id="local-root")
+        child = Agent(_subagent_id="sa-0-aaaa", _parent_subagent_id=None)
+        grandchild = Agent(_subagent_id="sa-1-bbbb", _parent_subagent_id="sa-0-aaaa")
+        child._delegate_parent_ref = weakref.ref(top)
+        grandchild._delegate_parent_ref = weakref.ref(child)
+        active = {"agent": top}
+        monkeypatch.setattr(plugin, "get_active_subagent_parent", lambda: active["agent"])
+        monkeypatch.setattr(
+            plugin, "declared_conversation_scope_safe", lambda agent: "gwk_top" if agent is top else None,
+        )
+        return SimpleNamespace(top=top, child=child, grandchild=grandchild, active=active)
+
+    def _run(self, tree, agent):
+        tree.active["agent"] = agent
+        p = _profile()
+        body = p.build_extra_body(session_id="20260101_120000_own")
+        _, top_level = p.build_api_kwargs_extras()
+        return body, top_level.get("extra_headers")
+
+    def test_every_subagent_stays_in_the_top_agents_session(self, tree):
+        for agent in (tree.child, tree.grandchild):
+            assert self._run(tree, agent)[0] == {"session_id": "gwk_top"}
+
+    def test_a_subagent_names_itself_and_the_subagent_that_launched_it(self, tree):
+        assert self._run(tree, tree.top)[1] is None
+        assert self._run(tree, tree.child)[1] == {"X-Hermes-Subagent-Id": "sa-0-aaaa"}
+        assert self._run(tree, tree.grandchild)[1] == {
+            "X-Hermes-Subagent-Id": "sa-1-bbbb", "X-Hermes-Parent-Subagent-Id": "sa-0-aaaa",
+        }
+
+
+class TestReasoning:
+
     @pytest.mark.parametrize(("config", "effort"), [
         (None, None),  # the model's default
         ({"enabled": True, "effort": "high"}, "high"),

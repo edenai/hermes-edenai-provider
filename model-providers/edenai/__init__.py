@@ -7,6 +7,8 @@ import urllib.request
 from typing import Any
 
 from agent.opencode_affinity import resolve_affinity_key
+from agent.prompt_cache_scope import declared_conversation_scope_safe
+from agent.subagent_lifecycle import get_active_subagent_parent
 from hermes_cli.version_info import hermes_user_agent
 from providers import register_provider
 from providers.base import ProviderProfile
@@ -20,6 +22,18 @@ _CATALOG_TTL_SECONDS = 600.0
 _FAILURE_TTL_SECONDS = 60.0
 # (catalog URL, API key) -> (fetched at, catalog items, or None after a failed fetch).
 _catalog_cache: dict[tuple[str, str], tuple[float, list[dict] | None]] = {}
+
+
+def _subagent() -> tuple[Any, Any]:
+    """The ``delegate_task`` subagent running this call (Hermes binds the agent of each turn,
+    a subagent's side calls included) and the top agent of its delegation tree, or two Nones."""
+    agent = get_active_subagent_parent()
+    if not getattr(agent, "_subagent_id", None):
+        return None, None
+    root = agent
+    while (ref := getattr(root, "_delegate_parent_ref", None)) and (parent := ref()) is not None:
+        root = parent
+    return agent, root
 
 
 def _catalog_url(base_url: str | None) -> str:
@@ -98,22 +112,31 @@ class EdenAIProfile(ProviderProfile):
 
     def build_extra_body(self, *, session_id: str | None = None, **context: Any) -> dict[str, Any]:
         """``session_id`` keeps a conversation's calls on one provider (its prompt cache) and groups
-        them as one session. The conversation's root scope comes first: compression does not rotate
-        it, and auxiliary calls, which pass no ``session_id``, share it."""
-        key = resolve_affinity_key(session_id)
+        them as one session: Hermes' affinity key, which compression does not rotate. A subagent
+        takes its delegation tree's top agent's key, so its calls stay in that session."""
+        _, root = _subagent()
+        key = (declared_conversation_scope_safe(root) if root else None) or resolve_affinity_key(session_id)
         return {"session_id": key} if key else {}
 
     def build_api_kwargs_extras(
         self, *, reasoning_config: dict | None = None, **context: Any
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Top-level ``reasoning_effort``: ``none`` turns reasoning off, an unset effort is left to
-        the model's default. Eden AI takes every level below and retries one a model does not take
-        with the nearest one it does, so the core ``supports_reasoning`` allowlist is not consulted."""
+        """Top-level ``reasoning_effort`` (``none`` turns reasoning off; Eden AI retries a level a
+        model does not take with the nearest one it does), and a subagent's ids in
+        ``X-Hermes-Subagent-Id`` / ``X-Hermes-Parent-Subagent-Id``, so Eden AI shows it as a
+        thread of its session."""
+        top_level: dict[str, Any] = {}
+        subagent, _ = _subagent()
+        if subagent:
+            headers = {"X-Hermes-Subagent-Id": subagent._subagent_id}
+            if parent := getattr(subagent, "_parent_subagent_id", None):
+                headers["X-Hermes-Parent-Subagent-Id"] = parent
+            top_level["extra_headers"] = headers
         config = reasoning_config if isinstance(reasoning_config, dict) else {}
-        if config.get("enabled") is False:
-            return {}, {"reasoning_effort": "none"}
-        effort = str(config.get("effort") or "").strip().lower()
-        return ({}, {"reasoning_effort": effort}) if effort in _EFFORTS else ({}, {})
+        effort = "none" if config.get("enabled") is False else str(config.get("effort") or "").strip().lower()
+        if effort in _EFFORTS:
+            top_level["reasoning_effort"] = effort
+        return {}, top_level
 
 
 edenai = EdenAIProfile(
