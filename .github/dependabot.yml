@@ -1,0 +1,16 @@
+# Dependabot version updates.
+#
+# Only github-actions is listed: nothing in this repo has a dependency
+# manifest (no requirements.txt, pyproject.toml or package.json), so other
+# ecosystems would have nothing to read. Add one here if a manifest appears.
+#
+# cooldown holds a newly published action version for 7 days before Dependabot
+# proposes it. It applies to version updates only, never to security updates.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7

@@ -1,0 +1,50 @@
+name: ci
+
+# Automated code checks on every pull request and on main.
+#
+# The plugin tests need a Hermes Agent checkout (see the README), so CI only
+# checks what can run standalone: Python syntax and the plugin manifest.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to full commit SHAs, not tags: a tag can be
+      # repointed by its owner. Dependabot bumps these.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Syntax check every Python file
+        run: git ls-files '*.py' | xargs --no-run-if-empty python -m py_compile
+
+      - name: Validate committed JSON and YAML
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys, yaml
+          files = subprocess.run(["git", "ls-files", "*.json", "*.yml", "*.yaml"],
+                                 capture_output=True, text=True, check=True).stdout.split()
+          bad = 0
+          for f in files:
+              try:
+                  with open(f, encoding="utf-8") as fh:
+                      (json.load if f.endswith(".json") else yaml.safe_load)(fh)
+              except Exception as e:
+                  print(f"::error file={f}::{e}")
+                  bad += 1
+          print(f"checked {len(files)} files, {bad} invalid")
+          sys.exit(1 if bad else 0)
+          PY
